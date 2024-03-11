@@ -95,7 +95,18 @@ class AccessibilityService : AccessibilityService() {
     private fun showOverlayWithProgress(progress: Int) {
         val sharedPreferences = PreferenceManager.getDefaultSharedPreferences(this)
 
-        val progressBarStyle = sharedPreferences.getString("progressBarStyle", "linear")
+        val progressBarStyle =
+            if (sharedPreferences.getBoolean("advancedProgressBarStyle", false)) {
+                sharedPreferences.getString(
+                    if (isInPortraitMode()) {
+                        "progressBarStylePortrait"
+                    } else {
+                        "progressBarStyleLandscape"
+                    }, "linear"
+                )
+            } else {
+                sharedPreferences.getString("progressBarStyle", "linear")
+            }
 
         if(progressBarStyle == "none") {
             if (this::overlayView.isInitialized && overlayView.isShown) {
@@ -105,11 +116,21 @@ class AccessibilityService : AccessibilityService() {
         }
 
         if (!this::overlayView.isInitialized || !overlayView.isShown) {
-            if (progressBarStyle == "linear") {
-                val showBelowNotch = sharedPreferences.getBoolean("showBelowNotch", false)
-                inflateOverlay(showBelowNotch)
+            inflateOverlay()
+        }
+
+        val showBelowNotch =
+            sharedPreferences.getBoolean("showBelowNotch", false) && progressBarStyle == "linear"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val params = overlayView.layoutParams as WindowManager.LayoutParams
+            val displayCutoutMode = if (showBelowNotch) {
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER
             } else {
-                inflateOverlay()
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+            if (params.layoutInDisplayCutoutMode != displayCutoutMode) {
+                params.layoutInDisplayCutoutMode = displayCutoutMode
+                windowManager.updateViewLayout(overlayView, params)
             }
         }
 
@@ -332,6 +353,10 @@ class AccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun isInPortraitMode(): Boolean {
+        return resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+    }
+
     private fun isLocked(): Boolean {
         return keyguardManager.isKeyguardLocked
     }
@@ -381,7 +406,7 @@ class AccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun inflateOverlay(showBelowNotch: Boolean = false) {
+    private fun inflateOverlay() {
         if (!this::overlayView.isInitialized) {
             overlayView = View.inflate(this, R.layout.progress_bar, null)
         }
@@ -419,20 +444,10 @@ class AccessibilityService : AccessibilityService() {
             params.alpha = 0.8f
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            if (!showBelowNotch) {
-                params.layoutInDisplayCutoutMode =
-                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-            } else {
-                params.layoutInDisplayCutoutMode =
-                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER
-            }
-        }
-
         if (!overlayView.isShown) {
             try {
                 windowManager.addView(overlayView, params)
-            } catch (e: WindowManager.BadTokenException) {
+            } catch (e: Exception) {
                 // TODO
                 return
             }
@@ -472,6 +487,7 @@ class AccessibilityService : AccessibilityService() {
         }
         stopService(Intent(this, FullscreenDetectionService::class.java))
         LocalBroadcastManager.getInstance(this).unregisterReceiver(fullscreenDetectionReceiver)
+        stopSelf()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
